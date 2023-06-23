@@ -58,12 +58,18 @@ void cuda_memset_2d(void* ptr, size_t pitch, size_t width, size_t height, int va
 
 void cuda_copy_from_host_to_device_2d(void* dst, size_t dst_pitch, const void* src, size_t src_pitch, size_t width, size_t height) {
     cudaError_t err = cudaMemcpy2D(dst, dst_pitch, src, src_pitch, width, height, cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) PANIC("cudaMemcpy2D failed");
+    if (err != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy2D failed: %s\n", cudaGetErrorString(err));
+        PANIC("cudaMemcpy2D failed");
+    }
 }
 
 void cuda_copy_from_device_to_host_2d(void* dst, size_t dst_pitch, const void* src, size_t src_pitch, size_t width, size_t height) {
     cudaError_t err = cudaMemcpy2D(dst, dst_pitch, src, src_pitch, width, height, cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess) PANIC("cudaMemcpy2D failed");
+    if (err != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy2D failed: %s\n", cudaGetErrorString(err));
+        PANIC("cudaMemcpy2D failed");
+    }
 }
 
 void cuda_copy_from_device_to_device_2d(void* dst, size_t dst_pitch, const void* src, size_t src_pitch, size_t width, size_t height) {
@@ -169,6 +175,27 @@ void cuda_matmul_batched(cublasHandle_t handle,
     if (err != cudaSuccess) PANIC("cudaFree failed");
 }
 
+void cuda_outer_product(cublasHandle_t handle,
+                        void* dst, size_t dst_pitch,
+                        void* vec1, size_t vec1_pitch,
+                        void* vec2, size_t vec2_pitch,
+                        size_t rows, size_t cols) {
+    __half alpha = __float2half(1.0f);
+    __half beta = __float2half(0.0f);
+    cublasStatus_t status = cublasHgemm(handle,
+                                        CUBLAS_OP_N,
+                                        CUBLAS_OP_T,
+                                        rows,
+                                        cols,
+                                        1,
+                                        &alpha,
+                                        (__half*) vec1, vec1_pitch / sizeof(__half),
+                                        (__half*) vec2, vec2_pitch / sizeof(__half),
+                                        &beta,
+                                        (__half*) dst, dst_pitch / sizeof(__half));
+    if (status != CUBLAS_STATUS_SUCCESS) PANIC("cublasHgemm failed");
+}
+
 void cuda_sigmoid(void* dst, size_t dst_pitch, size_t rows, size_t cols)
 {
     sigmoid_kernel_half(dst, (int) dst_pitch, (int) rows, (int) cols);
@@ -181,6 +208,30 @@ void cuda_sigmoid_tanh(void* dst, size_t dst_pitch, size_t rows, size_t cols)
     sigmoid_tanh_kernel_half(dst, (int) dst_pitch, (int) rows, (int) cols);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) PANIC("sigmoid_tanh_kernel_half failed");
+}
+
+void cuda_add(void* dst, size_t dst_pitch,
+              void* mat1, size_t mat1_pitch,
+              void* mat2, size_t mat2_pitch,
+              size_t rows, size_t cols) {
+    add_mat(dst, (int) dst_pitch,
+            mat1, (int) mat1_pitch,
+            mat2, (int) mat2_pitch,
+            (int) rows, (int) cols);
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) PANIC("add_mat failed");
+}
+
+void cuda_sub(void* dst, size_t dst_pitch,
+              void* mat1, size_t mat1_pitch,
+              void* mat2, size_t mat2_pitch,
+              size_t rows, size_t cols) {
+    sub_mat(dst, (int) dst_pitch,
+            mat1, (int) mat1_pitch,
+            mat2, (int) mat2_pitch,
+            (int) rows, (int) cols);
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) PANIC("add_mat failed");
 }
 
 void cuda_lstm_memory(void* new_memory, void* memory, void* forget_gate, void* input_gate, void* input, size_t rows)

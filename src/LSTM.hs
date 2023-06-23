@@ -15,6 +15,10 @@ import Data.Vector ( Vector, (!) )
 import qualified Data.Vector as V
 import Tensor
 
+-- ***** TODO: implementation is unverified.
+-- Need to write pure Haskell implementation and check are the numbers the
+-- same as tests.
+
 type NumInputs = Int
 type NumOutputs = Int
 type LayerSize = Int
@@ -141,7 +145,6 @@ propagate input_tensor st = go input_tensor 0
 
   go inputs idx | idx < V.length (layerSizes lstm) = do
     let c = layerConnects lstm ! idx
-        ninputs = cols (inputsToCell c)
         noutputs = rows (inputsToCell c)
         bias = biases lstm ! idx
         mems = memories st ! idx
@@ -188,3 +191,5 @@ propagate input_tensor st = go input_tensor 0
     copy last_acts t_o
 
     go t_o (idx+1)
+
+  go _ _ = error "impossible"

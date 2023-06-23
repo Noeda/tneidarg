@@ -9,6 +9,9 @@ module Tensor
   , toRows
   , zeros
   , viewColumnVec
+  , viewColumnVecOffset
+  , subtract
+  , add
   , sigmoid
   , sigmoidTanh
   , lstmMemory
@@ -18,7 +21,8 @@ module Tensor
   , matMul
   , matMulVec
   , matMulBatched
-  , matMulBatchedAdd )
+  , matMulBatchedAdd
+  , outerProduct )
   where
 
 import Control.Concurrent
@@ -34,6 +38,7 @@ import Foreign.Marshal.Alloc
 import Foreign.Marshal.Array
 import Foreign.Ptr
 import Foreign.Storable
+import Prelude hiding ( subtract )
 import System.Mem
 import System.IO.Unsafe
 
@@ -61,6 +66,12 @@ foreign import ccall "cuda_lstm_output" c_cuda_lstm_output ::
   Ptr () -> Ptr () -> Ptr () -> CSize -> IO ()
 foreign import ccall "cuda_lstm_bias_last_act" c_cuda_lstm_bias_last_act ::
   Ptr () -> Ptr () -> Ptr () -> Ptr () -> CSize -> IO ()
+foreign import ccall "cuda_sub" c_cuda_sub ::
+  Ptr () -> CSize -> Ptr () -> CSize -> Ptr () -> CSize -> CSize -> CSize -> IO ()
+foreign import ccall "cuda_add" c_cuda_add ::
+  Ptr () -> CSize -> Ptr () -> CSize -> Ptr () -> CSize -> CSize -> CSize -> IO ()
+foreign import ccall "cuda_outer_product" c_cuda_outer_product ::
+  Ptr () -> Ptr () -> CSize -> Ptr () -> CSize -> Ptr () -> CSize -> CSize -> CSize -> IO ()
 
 -- width of a float16
 dtWidth :: Integral a => a
@@ -79,18 +90,32 @@ initCuda = modifyMVar cudaInitialized $ \ptr ->
     else return (ptr, ptr)
 
 data Tensor = Tensor
-  { rawTensor :: ForeignPtr ()
-  , tensorPitch :: Int
-  , tensorRows :: Int
-  , tensorCols :: Int }
+  { rawTensor :: !(ForeignPtr ())
+  , tensorPitch :: !Int
+  , tensorRows :: !Int
+  , tensorCols :: !Int }
 
 viewColumnVec :: Tensor -> Int -> Tensor
+viewColumnVec vec _ | tensorCols vec /= 1 = error "viewColumnVec: tensorCols vec /= 1"
 viewColumnVec vec new_rows | new_rows == tensorRows vec = vec
 viewColumnVec vec new_rows | new_rows > tensorRows vec =
   error "viewColumnVec: new_rows > tensorRows vec"
-viewColumnVec vec _ | tensorCols vec /= 1 = error "viewColumnVec: tensorCols vec /= 1"
 viewColumnVec _ 0 = error "viewColumnVec: new_row == 0"
 viewColumnVec vec new_rows = vec { tensorRows = new_rows }
+
+-- viewColumnVecOffset tensor sz offset
+viewColumnVecOffset :: Tensor -> Int -> Int -> Tensor
+viewColumnVecOffset tensor _ _ | tensorCols tensor /= 1 = error "viewColumnVecOffset: tensorCols tensor /= 1"
+viewColumnVecOffset tensor sz 0 | sz == tensorRows tensor = tensor
+viewColumnVecOffset _ 0 _ = error "viewColumnVecOffset: new_row == 0"
+viewColumnVecOffset vec new_rows offset =
+  if new_rows > new_unviewed_sz
+    then error "viewColumnVecOffset: new_rows > new_unviewed_sz"
+    else vec { tensorRows = new_rows
+             , rawTensor = new_ptr }
+ where
+  new_unviewed_sz = tensorRows vec - offset
+  new_ptr = plusForeignPtr (rawTensor vec) (offset * dtWidth)
 
 rows :: Tensor -> Int
 rows = tensorRows
@@ -129,6 +154,8 @@ allocate rows cols = mask_ $ do
                                 dtWidth
                                 receiving_ptr
                                 receiving_pitch
+      -- If allocation fails, try GCing and then attempt once more, in the hope
+      -- that finalizers have run and freed up some memory.
       when (retval /= 0) $ do
         performGC
         retval2 <- c_cuda_alloc_2d (fromIntegral rows)
@@ -219,6 +246,70 @@ copy dst src = do
         (fromIntegral $ tensorRows dst)
         (fromIntegral $ tensorCols dst)
 
+-- subtract two matrices
+subtract :: Tensor -> Tensor -> Tensor -> IO ()
+subtract dst mat1 mat2 = do
+  void initCuda
+  when (tensorRows mat1 /= tensorRows mat2) $
+    error "Cannot subtract matrices with incompatible dimensions"
+  when (tensorCols mat1 /= tensorCols mat2) $
+    error "Cannot subtract matrices with incompatible dimensions"
+  when (tensorRows dst /= tensorRows mat1) $
+    error "Destination matrix has incompatible dimensions"
+  when (tensorCols dst /= tensorCols mat1) $
+    error "Destination matrix has incompatible dimensions"
+  withTensorPtr dst $ \dst_ptr ->
+    withTensorPtr mat1 $ \mat1_ptr ->
+      withTensorPtr mat2 $ \mat2_ptr ->
+        c_cuda_sub dst_ptr (fromIntegral (tensorPitch dst))
+                   mat1_ptr (fromIntegral (tensorPitch mat1))
+                   mat2_ptr (fromIntegral (tensorPitch mat2))
+                   (fromIntegral $ tensorRows dst)
+                   (fromIntegral $ tensorCols dst)
+
+-- subtract two matrices
+add :: Tensor -> Tensor -> Tensor -> IO ()
+add dst mat1 mat2 = do
+  void initCuda
+  when (tensorRows mat1 /= tensorRows mat2) $
+    error "Cannot add matrices with incompatible dimensions"
+  when (tensorCols mat1 /= tensorCols mat2) $
+    error "Cannot add matrices with incompatible dimensions"
+  when (tensorRows dst /= tensorRows mat1) $
+    error "Destination matrix has incompatible dimensions"
+  when (tensorCols dst /= tensorCols mat1) $
+    error "Destination matrix has incompatible dimensions"
+  withTensorPtr dst $ \dst_ptr ->
+    withTensorPtr mat1 $ \mat1_ptr ->
+      withTensorPtr mat2 $ \mat2_ptr ->
+        c_cuda_add dst_ptr (fromIntegral (tensorPitch dst))
+                   mat1_ptr (fromIntegral (tensorPitch mat1))
+                   mat2_ptr (fromIntegral (tensorPitch mat2))
+                   (fromIntegral $ tensorRows dst)
+                   (fromIntegral $ tensorCols dst)
+
+outerProduct :: Tensor -> Tensor -> Tensor -> IO ()
+outerProduct dst vec1 vec2 = do
+  cublas_ptr <- initCuda
+  when (tensorCols vec1 /= 1) $
+    error "Cannot compute outer product of a non-vector"
+  when (tensorCols vec2 /= 1) $
+    error "Cannot compute outer product of a non-vector"
+  when (tensorRows dst /= tensorRows vec1) $
+    error "Destination matrix has incompatible dimensions"
+  when (tensorCols dst /= tensorRows vec2) $
+    error "Destination matrix has incompatible dimensions"
+
+  withTensorPtr dst $ \dst_ptr ->
+    withTensorPtr vec1 $ \vec1_ptr ->
+      withTensorPtr vec2 $ \vec2_ptr ->
+        c_cuda_outer_product cublas_ptr
+                             dst_ptr (fromIntegral (tensorPitch dst))
+                             vec1_ptr (fromIntegral (tensorPitch vec1))
+                             vec2_ptr (fromIntegral (tensorPitch vec2))
+                             (fromIntegral $ tensorRows dst)
+                             (fromIntegral $ tensorCols dst)
+
 -- dst mat1 mat2
 matMul :: Tensor -> Tensor -> Tensor -> IO ()
 matMul dst mat1 mat2 = do
@@ -263,11 +354,9 @@ matMulVec dst mat1 vec2 = do
                           (fromIntegral $ tensorRows dst)
                           (fromIntegral $ tensorCols mat1)
 
--- dst = dst mat1 mat2
 matMulBatched :: [Tensor] -> [Tensor] -> [Tensor] -> IO ()
 matMulBatched dsts mat1s mat2s = matMulBatchedAdd dsts mat1s mat2s 0
 
--- dst += multiplier*dst mat1 mat2
 matMulBatchedAdd :: [Tensor] -> [Tensor] -> [Tensor] -> Double -> IO ()
 matMulBatchedAdd dsts mat1s mat2s multiplier = do
   cublas_ptr <- initCuda

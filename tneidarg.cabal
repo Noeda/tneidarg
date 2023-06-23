@@ -13,13 +13,19 @@ extra-doc-files:    CHANGELOG.md
 common warnings
     ghc-options: -Wall -fno-warn-name-shadowing -threaded -rtsopts "-with-rtsopts=-N -A128m" -O2
 
-executable tneidarg
+library
+    import:           warnings
+    exposed-modules:  Tensor, LSTM
+    c-sources:        cbits/cuda_glue.cc
+    extra-libraries:  cudart, cublas
+    build-depends:    base >=4.9, half, primitive, vector
+    hs-source-dirs:   src
+    default-language: GHC2021
+
+executable tneidarg-toy
     import:           warnings
     main-is:          Main.hs
-    other-modules:    Tensor, LSTM
-    c-sources:        cbits/cuda_glue.cc
+    hs-source-dirs:   exe
     ghc-options:      -optl=./cbits/libcuda_kernels.so
-    extra-libraries:  cudart, cublas
-    build-depends:    base >=4.9, half, primitive, time, vector, async
-    hs-source-dirs:   src
+    build-depends:    async, base >=4.9, time, tneidarg, random
     default-language: GHC2021
