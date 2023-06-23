@@ -1,7 +1,7 @@
 cabal-version:      3.0
 name:               tneidarg
 version:            0.1.0.0
-synopsis:           Experiment training LLMs without gradients
+synopsis:           CUDA-based linear algebra operations for Haskell
 license:            AGPL-3.0-only
 license-file:       LICENSE
 author:             Mikko Juola
