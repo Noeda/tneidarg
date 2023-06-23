@@ -1,0 +1,25 @@
+cabal-version:      3.0
+name:               tneidarg
+version:            0.1.0.0
+synopsis:           Experiment training LLMs without gradients
+license:            AGPL-3.0-only
+license-file:       LICENSE
+author:             Mikko Juola
+maintainer:         mikko.juola@iki.fi
+category:           Text
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common warnings
+    ghc-options: -Wall -fno-warn-name-shadowing -threaded -rtsopts "-with-rtsopts=-N -A128m" -O2
+
+executable tneidarg
+    import:           warnings
+    main-is:          Main.hs
+    other-modules:    Tensor, LSTM
+    c-sources:        cbits/cuda_glue.cc
+    ghc-options:      -optl=./cbits/libcuda_kernels.so
+    extra-libraries:  cudart, cublas
+    build-depends:    base >=4.9, half, primitive, time, vector, async
+    hs-source-dirs:   src
+    default-language: GHC2021
