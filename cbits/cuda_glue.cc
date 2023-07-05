@@ -234,25 +234,9 @@ void cuda_sub(void* dst, size_t dst_pitch,
     if (err != cudaSuccess) PANIC("add_mat failed");
 }
 
-void cuda_lstm_memory(void* new_memory, void* memory, void* forget_gate, void* input_gate, void* input, size_t rows)
+void cuda_scale(void* matrix, void* scale, size_t pitch, size_t rows, size_t cols)
 {
-    lstm_memory_half(new_memory, memory, forget_gate, input_gate, input, (int) rows);
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) PANIC("sigmoid_tanh_kernel_half failed");
-}
-
-void cuda_lstm_output(void* out, void* x, void* y, size_t rows)
-{
-    lstm_output_half(out, x, y, (int) rows);
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) PANIC("sigmoid_tanh_kernel_half failed");
-}
-
-void cuda_lstm_bias_last_act(void* out, void* bias, void* weight, void* act, size_t rows)
-{
-    lstm_bias_last_act_half(out, bias, weight, act, (int) rows);
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) PANIC("sigmoid_tanh_kernel_half failed");
+    scale_mat(matrix, scale, (int) pitch, (int) rows, (int) cols);
 }
 
 } // extern "C"

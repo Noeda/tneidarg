@@ -66,33 +66,17 @@ __global__ void sub_mat_kernel (T* dst, int dst_pitch,
 }
 
 template<class T>
-__global__  void lstm_memory_kernel(T* new_memory, T* memory, T* forget_gate, T* input_gate, T* input, int rows)
+__global__ void scale_mat_kernel(T* matrix, T* scale, int pitch, int rows, int cols)
 {
-    const int x = blockIdx.x * blockDim.x + threadIdx.x;
-    if (x >= rows) {
+    // x = row
+    // y = col
+    const int global_x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int global_y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (global_x >= rows || global_y >= cols) {
         return;
     }
-    new_memory[x] = forget_gate[x] * memory[x] + input_gate[x] * input[x];
-}
-
-template<class T>
-__global__  void lstm_output_kernel(T* out, T* x, T* y, int rows)
-{
-    const int offset = blockIdx.x * blockDim.x + threadIdx.x;
-    if (offset >= rows) {
-        return;
-    }
-    out[offset] = tanh((float) x[offset]) * (1.0 / (1.0 + exp((float) -y[offset])));
-}
-
-template<class T>
-__global__  void lstm_bias_last_act(T* out, T* bias, T* weight, T* act, int rows)
-{
-    const int offset = blockIdx.x * blockDim.x + threadIdx.x;
-    if (offset >= rows) {
-        return;
-    }
-    out[offset] = bias[offset] + weight[offset] * act[offset];
+    const int offset = global_y * pitch + global_x;
+    matrix[offset] *= scale[0];
 }
 
 extern "C" {
@@ -133,24 +117,6 @@ extern "C" {
             sigmoid_tanh_kernel<<<grid_size, block_size>>>(dst, pitch, rows, cols);
         }
     };
-
-    void lstm_memory_half(void* new_memory, void* memory, void* forget_gate, void* input_gate, void* input, int rows) {
-        const int block_size = 256;
-        const int grid_size = (rows + block_size - 1) / block_size;
-        lstm_memory_kernel<<<grid_size, block_size>>>((__half*) new_memory, (__half*) memory, (__half*) forget_gate, (__half*) input_gate, (__half*) input, rows);
-    }
-
-    void lstm_output_half(void* out, void* x, void* y, int rows) {
-        const int block_size = 256;
-        const int grid_size = (rows + block_size - 1) / block_size;
-        lstm_output_kernel<<<grid_size, block_size>>>((__half*) out, (__half*) x, (__half*) y, rows);
-    }
-
-    void lstm_bias_last_act_half(void* out, void* bias, void* weights, void* act, int rows) {
-        const int block_size = 256;
-        const int grid_size = (rows + block_size - 1) / block_size;
-        lstm_bias_last_act<<<grid_size, block_size>>>((__half*) out, (__half*) bias, (__half*) weights, (__half*) act, rows);
-    }
 
     void add_mat(void* raw_dst, int dst_pitch,
                  void* raw_mat1, int mat1_pitch,
@@ -199,6 +165,25 @@ extern "C" {
             dim3 grid_size(grid_size_x, grid_size_y);
             dim3 block_size(block_size_x, block_size_y);
             sub_mat_kernel<<<grid_size, block_size>>>(dst, dst_pitch, mat1, mat1_pitch, mat2, mat2_pitch, nrows, ncols);
+        }
+    }
+
+    void scale_mat(void* raw_matrix, void* raw_scale, int pitch, int rows, int cols) {
+        __half* matrix = (__half*) raw_matrix;
+        __half* scale = (__half*) raw_scale;
+        pitch /= 2;
+        if (cols == 1) {
+            const int block_size = 256;
+            const int grid_size = (rows + block_size - 1) / block_size;
+            scale_mat_kernel<<<grid_size, block_size>>>(matrix, scale, pitch, rows, cols);
+        } else {
+            const int block_size_x = 32;
+            const int block_size_y = 32;
+            const int grid_size_x = (rows + block_size_x - 1) / block_size_x;
+            const int grid_size_y = (cols + block_size_y - 1) / block_size_y;
+            dim3 grid_size(grid_size_x, grid_size_y);
+            dim3 block_size(block_size_x, block_size_y);
+            scale_mat_kernel<<<grid_size, block_size>>>(matrix, scale, pitch, rows, cols);
         }
     }
 }

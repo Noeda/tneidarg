@@ -15,7 +15,7 @@ common warnings
 
 library
     import:           warnings
-    exposed-modules:  Tensor, LSTM
+    exposed-modules:  Tensor
     c-sources:        cbits/cuda_glue.cc
     extra-libraries:  cudart, cublas
     build-depends:    base >=4.9, half, primitive, vector
@@ -27,5 +27,5 @@ executable tneidarg-toy
     main-is:          Main.hs
     hs-source-dirs:   exe
     ghc-options:      -optl=./cbits/libcuda_kernels.so
-    build-depends:    async, base >=4.9, time, tneidarg, random
+    build-depends:    async, base >=4.9, time, tneidarg, random, containers, vector
     default-language: GHC2021

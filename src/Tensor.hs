@@ -9,14 +9,12 @@ module Tensor
   , toRows
   , zeros
   , viewColumnVec
-  , viewColumnVecOffset
+  , viewRows
   , subtract
   , add
+  , scale
   , sigmoid
   , sigmoidTanh
-  , lstmMemory
-  , lstmOutput
-  , lstmBiasLastAct
   , copy
   , matMul
   , matMulVec
@@ -60,18 +58,14 @@ foreign import ccall "cuda_sigmoid" c_cuda_sigmoid ::
   Ptr () -> CSize -> CSize -> CSize -> IO ()
 foreign import ccall "cuda_sigmoid_tanh" c_cuda_sigmoid_tanh ::
   Ptr () -> CSize -> CSize -> CSize -> IO ()
-foreign import ccall "cuda_lstm_memory" c_cuda_lstm_memory ::
-  Ptr () -> Ptr () -> Ptr () -> Ptr () -> Ptr () -> CSize -> IO ()
-foreign import ccall "cuda_lstm_output" c_cuda_lstm_output ::
-  Ptr () -> Ptr () -> Ptr () -> CSize -> IO ()
-foreign import ccall "cuda_lstm_bias_last_act" c_cuda_lstm_bias_last_act ::
-  Ptr () -> Ptr () -> Ptr () -> Ptr () -> CSize -> IO ()
 foreign import ccall "cuda_sub" c_cuda_sub ::
   Ptr () -> CSize -> Ptr () -> CSize -> Ptr () -> CSize -> CSize -> CSize -> IO ()
 foreign import ccall "cuda_add" c_cuda_add ::
   Ptr () -> CSize -> Ptr () -> CSize -> Ptr () -> CSize -> CSize -> CSize -> IO ()
 foreign import ccall "cuda_outer_product" c_cuda_outer_product ::
   Ptr () -> Ptr () -> CSize -> Ptr () -> CSize -> Ptr () -> CSize -> CSize -> CSize -> IO ()
+foreign import ccall "cuda_scale" c_cuda_scale ::
+  Ptr () -> Ptr () -> CSize -> CSize -> CSize -> IO ()
 
 -- width of a float16
 dtWidth :: Integral a => a
@@ -103,12 +97,11 @@ viewColumnVec vec new_rows | new_rows > tensorRows vec =
 viewColumnVec _ 0 = error "viewColumnVec: new_row == 0"
 viewColumnVec vec new_rows = vec { tensorRows = new_rows }
 
--- viewColumnVecOffset tensor sz offset
-viewColumnVecOffset :: Tensor -> Int -> Int -> Tensor
-viewColumnVecOffset tensor _ _ | tensorCols tensor /= 1 = error "viewColumnVecOffset: tensorCols tensor /= 1"
-viewColumnVecOffset tensor sz 0 | sz == tensorRows tensor = tensor
-viewColumnVecOffset _ 0 _ = error "viewColumnVecOffset: new_row == 0"
-viewColumnVecOffset vec new_rows offset =
+-- viewRows tensor sz offset
+viewRows :: Tensor -> Int -> Int -> Tensor
+viewRows tensor sz 0 | sz == tensorRows tensor = tensor
+viewRows _ 0 _ = error "viewRowsOffset: new_row == 0"
+viewRows vec new_rows offset =
   if new_rows > new_unviewed_sz
     then error "viewColumnVecOffset: new_rows > new_unviewed_sz"
     else vec { tensorRows = new_rows
@@ -387,6 +380,19 @@ matMulBatchedAdd dsts mat1s mat2s multiplier = do
                               (fromIntegral nbatches)
                               (CDouble multiplier)
 
+scale :: Tensor -> Tensor -> IO ()
+scale tensor scalar = do
+  when (tensorRows scalar /= 1 || tensorCols scalar /= 1) $
+    error "Scalar must be a 1x1 tensor"
+  void initCuda
+  withTensorPtr tensor $ \tensor_ptr ->
+    withTensorPtr scalar $ \scalar_ptr ->
+        c_cuda_scale tensor_ptr
+                     scalar_ptr
+                     (fromIntegral $ tensorPitch tensor)
+                     (fromIntegral $ tensorRows tensor)
+                     (fromIntegral $ tensorCols tensor)
+
 -- Apply sigmoid function to a tensor
 sigmoid :: Tensor -> IO ()
 sigmoid tensor = do
@@ -403,93 +409,3 @@ sigmoidTanh tensor = do
                         (fromIntegral $ tensorPitch tensor)
                         (fromIntegral $ tensorRows tensor)
                         (fromIntegral $ tensorCols tensor)
-
--- Applies a calculation used in LSTM:
--- new_memory = memory * forget_gate + input_gate * input
--- lstmMemory new_memory memory forget_gate input_gate input
-lstmMemory :: Tensor -> Tensor -> Tensor -> Tensor -> Tensor -> IO ()
-lstmMemory new_memory memory forget_gate input_gate input = do
-  when (tensorCols new_memory /= 1) $
-    error "Destination matrix has incompatible dimensions (1 column expected)"
-  when (tensorCols memory /= 1) $
-    error "Source memory matrix has incompatible dimensions (1 column expected)"
-  when (tensorCols forget_gate /= 1) $
-    error "Forget gate matrix has incompatible dimensions (1 column expected)"
-  when (tensorCols input_gate /= 1) $
-    error "Input gate matrix has incompatible dimensions (1 column expected)"
-  when (tensorCols input /= 1) $
-    error "Input matrix has incompatible dimensions (1 column expected)"
-  when (tensorRows new_memory /= tensorRows memory) $
-    error "Destination matrix has incompatible dimensions"
-  when (tensorRows new_memory /= tensorRows forget_gate) $
-    error "Destination matrix has incompatible dimensions"
-  when (tensorRows new_memory /= tensorRows input_gate) $
-    error "Destination matrix has incompatible dimensions"
-  when (tensorRows new_memory /= tensorRows input) $
-    error "Destination matrix has incompatible dimensions"
-
-  withTensorPtr new_memory $ \new_memory_ptr ->
-    withTensorPtr memory $ \memory_ptr ->
-      withTensorPtr forget_gate $ \forget_gate_ptr ->
-        withTensorPtr input_gate $ \input_gate_ptr ->
-          withTensorPtr input $ \input_ptr ->
-            c_cuda_lstm_memory new_memory_ptr
-                               memory_ptr
-                               forget_gate_ptr
-                               input_gate_ptr
-                               input_ptr
-                               (fromIntegral $ tensorRows new_memory)
-
--- computes:
--- out = tanh(x) * sigmoid(y)
--- lstmOutput out x y
-lstmOutput :: Tensor -> Tensor -> Tensor -> IO ()
-lstmOutput out x y = do
-  when (tensorCols out /= 1) $
-    error "Destination matrix has incompatible dimensions (1 column expected)"
-  when (tensorCols x /= 1) $
-    error "Source x matrix has incompatible dimensions (1 column expected)"
-  when (tensorCols y /= 1) $
-    error "Source y matrix has incompatible dimensions (1 column expected)"
-  when (tensorRows out /= tensorRows x) $
-    error "Destination matrix has incompatible dimensions"
-  when (tensorRows out /= tensorRows y) $
-    error "Destination matrix has incompatible dimensions"
-
-  withTensorPtr out $ \out_ptr ->
-    withTensorPtr x $ \x_ptr ->
-      withTensorPtr y $ \y_ptr ->
-        c_cuda_lstm_output out_ptr
-                           x_ptr
-                           y_ptr
-                           (fromIntegral $ tensorRows out)
-
--- computes:
--- out = bias + weight * act
--- lstmBiasLastAct out bias weight act
-lstmBiasLastAct :: Tensor -> Tensor -> Tensor -> Tensor -> IO ()
-lstmBiasLastAct out bias weight act = do
-  when (tensorCols out /= 1) $
-    error "Destination matrix has incompatible dimensions (1 column expected)"
-  when (tensorCols bias /= 1) $
-    error "Source x matrix has incompatible dimensions (1 column expected)"
-  when (tensorCols weight /= 1) $
-    error "Source y matrix has incompatible dimensions (1 column expected)"
-  when (tensorCols act /= 1) $
-    error "Source y matrix has incompatible dimensions (1 column expected)"
-  when (tensorRows out /= tensorRows bias) $
-    error "Destination matrix has incompatible dimensions"
-  when (tensorRows out /= tensorRows weight) $
-    error "Destination matrix has incompatible dimensions"
-  when (tensorRows out /= tensorRows act) $
-    error "Destination matrix has incompatible dimensions"
-
-  withTensorPtr out $ \out_ptr ->
-    withTensorPtr bias $ \bias_ptr ->
-      withTensorPtr weight $ \weight_ptr ->
-        withTensorPtr act $ \act_ptr ->
-          c_cuda_lstm_bias_last_act out_ptr
-                                    bias_ptr
-                                    weight_ptr
-                                    act_ptr
-                                    (fromIntegral $ tensorRows out)
