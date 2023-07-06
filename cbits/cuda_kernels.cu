@@ -80,14 +80,14 @@ __global__ void scale_mat_kernel(T* matrix, T* scale, int pitch, int rows, int c
 }
 
 extern "C" {
-    void sigmoid_kernel_half(void* raw_dst, int pitch, int rows, int cols)
+    void sigmoid_kernel_half(void* raw_dst, int pitch, int rows, int cols, cudaStream_t* stream)
     {
         pitch /= 2;
         __half* dst = (__half*) raw_dst;
         if (cols == 1) {
             const int block_size = 256;
             const int grid_size = (rows + block_size - 1) / block_size;
-            sigmoid_kernel<<<grid_size, block_size>>>(dst, pitch, rows, cols);
+            sigmoid_kernel<<<grid_size, block_size, 0, *stream>>>(dst, pitch, rows, cols);
         } else {
             const int block_size_x = 32;
             const int block_size_y = 32;
@@ -95,18 +95,18 @@ extern "C" {
             const int grid_size_y = (cols + block_size_y - 1) / block_size_y;
             dim3 grid_size(grid_size_x, grid_size_y);
             dim3 block_size(block_size_x, block_size_y);
-            sigmoid_kernel<<<grid_size, block_size>>>(dst, pitch, rows, cols);
+            sigmoid_kernel<<<grid_size, block_size, 0, *stream>>>(dst, pitch, rows, cols);
         }
     };
 
-    void sigmoid_tanh_kernel_half(void* raw_dst, int pitch, int rows, int cols)
+    void sigmoid_tanh_kernel_half(void* raw_dst, int pitch, int rows, int cols, cudaStream_t* stream)
     {
         pitch /= 2;
         __half* dst = (__half*) raw_dst;
         if (cols == 1) {
             const int block_size = 256;
             const int grid_size = (rows + block_size - 1) / block_size;
-            sigmoid_tanh_kernel<<<grid_size, block_size>>>(dst, pitch, rows, cols);
+            sigmoid_tanh_kernel<<<grid_size, block_size, 0, *stream>>>(dst, pitch, rows, cols);
         } else {
             const int block_size_x = 32;
             const int block_size_y = 32;
@@ -114,14 +114,15 @@ extern "C" {
             const int grid_size_y = (cols + block_size_y - 1) / block_size_y;
             dim3 grid_size(grid_size_x, grid_size_y);
             dim3 block_size(block_size_x, block_size_y);
-            sigmoid_tanh_kernel<<<grid_size, block_size>>>(dst, pitch, rows, cols);
+            sigmoid_tanh_kernel<<<grid_size, block_size, 0, *stream>>>(dst, pitch, rows, cols);
         }
     };
 
     void add_mat(void* raw_dst, int dst_pitch,
                  void* raw_mat1, int mat1_pitch,
                  void* raw_mat2, int mat2_pitch,
-                 int nrows, int ncols) {
+                 int nrows, int ncols,
+                 cudaStream_t* stream) {
         __half* dst = (__half*) raw_dst;
         __half* mat1 = (__half*) raw_mat1;
         __half* mat2 = (__half*) raw_mat2;
@@ -131,7 +132,7 @@ extern "C" {
         if (ncols == 1) {
             const int block_size = 256;
             const int grid_size = (nrows + block_size - 1) / block_size;
-            add_mat_kernel<<<grid_size, block_size>>>(dst, dst_pitch, mat1, mat1_pitch, mat2, mat2_pitch, nrows, ncols);
+            add_mat_kernel<<<grid_size, block_size, 0, *stream>>>(dst, dst_pitch, mat1, mat1_pitch, mat2, mat2_pitch, nrows, ncols);
         } else {
             const int block_size_x = 32;
             const int block_size_y = 32;
@@ -139,14 +140,15 @@ extern "C" {
             const int grid_size_y = (ncols + block_size_y - 1) / block_size_y;
             dim3 grid_size(grid_size_x, grid_size_y);
             dim3 block_size(block_size_x, block_size_y);
-            add_mat_kernel<<<grid_size, block_size>>>(dst, dst_pitch, mat1, mat1_pitch, mat2, mat2_pitch, nrows, ncols);
+            add_mat_kernel<<<grid_size, block_size, 0, *stream>>>(dst, dst_pitch, mat1, mat1_pitch, mat2, mat2_pitch, nrows, ncols);
         }
     }
 
     void sub_mat(void* raw_dst, int dst_pitch,
                  void* raw_mat1, int mat1_pitch,
                  void* raw_mat2, int mat2_pitch,
-                 int nrows, int ncols) {
+                 int nrows, int ncols,
+                 cudaStream_t* stream) {
         __half* dst = (__half*) raw_dst;
         __half* mat1 = (__half*) raw_mat1;
         __half* mat2 = (__half*) raw_mat2;
@@ -156,7 +158,7 @@ extern "C" {
         if (ncols == 1) {
             const int block_size = 256;
             const int grid_size = (nrows + block_size - 1) / block_size;
-            sub_mat_kernel<<<grid_size, block_size>>>(dst, dst_pitch, mat1, mat1_pitch, mat2, mat2_pitch, nrows, ncols);
+            sub_mat_kernel<<<grid_size, block_size, 0, *stream>>>(dst, dst_pitch, mat1, mat1_pitch, mat2, mat2_pitch, nrows, ncols);
         } else {
             const int block_size_x = 32;
             const int block_size_y = 32;
@@ -164,18 +166,18 @@ extern "C" {
             const int grid_size_y = (ncols + block_size_y - 1) / block_size_y;
             dim3 grid_size(grid_size_x, grid_size_y);
             dim3 block_size(block_size_x, block_size_y);
-            sub_mat_kernel<<<grid_size, block_size>>>(dst, dst_pitch, mat1, mat1_pitch, mat2, mat2_pitch, nrows, ncols);
+            sub_mat_kernel<<<grid_size, block_size, 0, *stream>>>(dst, dst_pitch, mat1, mat1_pitch, mat2, mat2_pitch, nrows, ncols);
         }
     }
 
-    void scale_mat(void* raw_matrix, void* raw_scale, int pitch, int rows, int cols) {
+    void scale_mat(void* raw_matrix, void* raw_scale, int pitch, int rows, int cols, cudaStream_t* stream) {
         __half* matrix = (__half*) raw_matrix;
         __half* scale = (__half*) raw_scale;
         pitch /= 2;
         if (cols == 1) {
             const int block_size = 256;
             const int grid_size = (rows + block_size - 1) / block_size;
-            scale_mat_kernel<<<grid_size, block_size>>>(matrix, scale, pitch, rows, cols);
+            scale_mat_kernel<<<grid_size, block_size, 0, *stream>>>(matrix, scale, pitch, rows, cols);
         } else {
             const int block_size_x = 32;
             const int block_size_y = 32;
@@ -183,7 +185,7 @@ extern "C" {
             const int grid_size_y = (cols + block_size_y - 1) / block_size_y;
             dim3 grid_size(grid_size_x, grid_size_y);
             dim3 block_size(block_size_x, block_size_y);
-            scale_mat_kernel<<<grid_size, block_size>>>(matrix, scale, pitch, rows, cols);
+            scale_mat_kernel<<<grid_size, block_size, 0, *stream>>>(matrix, scale, pitch, rows, cols);
         }
     }
 }

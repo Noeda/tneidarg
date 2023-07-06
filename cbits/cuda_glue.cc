@@ -51,8 +51,8 @@ void cuda_dealloc(void* ptr) {
     if (err != cudaSuccess) PANIC("cudaFree failed")
 }
 
-void cuda_memset_2d(void* ptr, size_t pitch, size_t width, size_t height, int value) {
-    cudaError_t err = cudaMemset2D(ptr, pitch, value, width, height);
+void cuda_memset_2d(void* ptr, size_t pitch, size_t width, size_t height, int value, cudaStream_t* stream) {
+    cudaError_t err = cudaMemset2DAsync(ptr, pitch, value, width, height, *stream);
     if (err != cudaSuccess) PANIC("cudaMemset2D failed");
 }
 
@@ -72,18 +72,20 @@ void cuda_copy_from_device_to_host_2d(void* dst, size_t dst_pitch, const void* s
     }
 }
 
-void cuda_copy_from_device_to_device_2d(void* dst, size_t dst_pitch, const void* src, size_t src_pitch, size_t width, size_t height) {
-    cudaError_t err = cudaMemcpy2D(dst, dst_pitch, src, src_pitch, width, height, cudaMemcpyDeviceToDevice);
-    if (err != cudaSuccess) PANIC("cudaMemcpy2D failed");
+void cuda_copy_from_device_to_device_2d(void* dst, size_t dst_pitch, const void* src, size_t src_pitch, size_t width, size_t height, cudaStream_t* stream) {
+    cudaError_t err = cudaMemcpy2DAsync(dst, dst_pitch, src, src_pitch, width, height, cudaMemcpyDeviceToDevice, *stream);
+    if (err != cudaSuccess) PANIC("cudaMemcpy2DAsync failed");
 }
 
 void cuda_matmul(cublasHandle_t handle,
                  void* dst, size_t dst_pitch,
                  void* mat1, size_t mat1_pitch,
                  void* mat2, size_t mat2_pitch,
-                 size_t final_rows, size_t final_cols, size_t common_dim) {
+                 size_t final_rows, size_t final_cols, size_t common_dim,
+                 cudaStream_t* stream) {
     __half alpha = __float2half(1.0f);
     __half beta = __float2half(0.0f);
+    cublasSetStream(handle, *stream);
     cublasStatus_t status = cublasHgemm(handle,
                                         CUBLAS_OP_N,
                                         CUBLAS_OP_N,
@@ -102,9 +104,11 @@ void cuda_matmul_vec(cublasHandle_t handle,
                  void* dst, size_t dst_pitch,
                  void* mat1, size_t mat1_pitch,
                  void* mat2, size_t mat2_pitch,
-                 size_t final_rows, size_t common_dim) {
+                 size_t final_rows, size_t common_dim,
+                 cudaStream_t* stream) {
     __half alpha = __float2half(1.0f);
     __half beta = __float2half(0.0f);
+    cublasSetStream(handle, *stream);
     cublasStatus_t status = cublasHgemm(handle,
                                         CUBLAS_OP_N,
                                         CUBLAS_OP_N,
@@ -125,17 +129,19 @@ void cuda_matmul_batched(cublasHandle_t handle,
                          void** mat2s, size_t mat2_pitch,
                          size_t final_rows, size_t final_cols, size_t common_dim,
                          int nbatches,
-                         double multiplier) {
+                         double multiplier,
+                         cudaStream_t* stream) {
     __half alpha = __float2half(1.0f);
     __half beta = __double2half(multiplier);
     __half** mat1s_gpu;
     __half** mat2s_gpu;
     __half** dsts_gpu;
 
+    cublasSetStream(handle, *stream);
     // zero out destination if beta is not 0
     if (multiplier != 0.0) {
         for (int i = 0; i < nbatches; i++) {
-            cuda_memset_2d(dsts[i], dst_pitch, final_rows * sizeof(__half), final_cols, 0);
+            cuda_memset_2d(dsts[i], dst_pitch, final_rows * sizeof(__half), final_cols, 0, stream);
         }
     }
 
@@ -179,9 +185,11 @@ void cuda_outer_product(cublasHandle_t handle,
                         void* dst, size_t dst_pitch,
                         void* vec1, size_t vec1_pitch,
                         void* vec2, size_t vec2_pitch,
-                        size_t rows, size_t cols) {
+                        size_t rows, size_t cols,
+                        cudaStream_t* stream) {
     __half alpha = __float2half(1.0f);
     __half beta = __float2half(0.0f);
+    cublasSetStream(handle, *stream);
     cublasStatus_t status = cublasHgemm(handle,
                                         CUBLAS_OP_N,
                                         CUBLAS_OP_T,
@@ -196,16 +204,16 @@ void cuda_outer_product(cublasHandle_t handle,
     if (status != CUBLAS_STATUS_SUCCESS) PANIC("cublasHgemm failed");
 }
 
-void cuda_sigmoid(void* dst, size_t dst_pitch, size_t rows, size_t cols)
+void cuda_sigmoid(void* dst, size_t dst_pitch, size_t rows, size_t cols, cudaStream_t* stream)
 {
-    sigmoid_kernel_half(dst, (int) dst_pitch, (int) rows, (int) cols);
+    sigmoid_kernel_half(dst, (int) dst_pitch, (int) rows, (int) cols, stream);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) PANIC("sigmoid_kernel_half failed");
 }
 
-void cuda_sigmoid_tanh(void* dst, size_t dst_pitch, size_t rows, size_t cols)
+void cuda_sigmoid_tanh(void* dst, size_t dst_pitch, size_t rows, size_t cols, cudaStream_t* stream)
 {
-    sigmoid_tanh_kernel_half(dst, (int) dst_pitch, (int) rows, (int) cols);
+    sigmoid_tanh_kernel_half(dst, (int) dst_pitch, (int) rows, (int) cols, stream);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) PANIC("sigmoid_tanh_kernel_half failed");
 }
@@ -213,11 +221,12 @@ void cuda_sigmoid_tanh(void* dst, size_t dst_pitch, size_t rows, size_t cols)
 void cuda_add(void* dst, size_t dst_pitch,
               void* mat1, size_t mat1_pitch,
               void* mat2, size_t mat2_pitch,
-              size_t rows, size_t cols) {
+              size_t rows, size_t cols, cudaStream_t* stream) {
     add_mat(dst, (int) dst_pitch,
             mat1, (int) mat1_pitch,
             mat2, (int) mat2_pitch,
-            (int) rows, (int) cols);
+            (int) rows, (int) cols,
+            stream);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) PANIC("add_mat failed");
 }
@@ -225,18 +234,55 @@ void cuda_add(void* dst, size_t dst_pitch,
 void cuda_sub(void* dst, size_t dst_pitch,
               void* mat1, size_t mat1_pitch,
               void* mat2, size_t mat2_pitch,
-              size_t rows, size_t cols) {
+              size_t rows, size_t cols, cudaStream_t* stream) {
     sub_mat(dst, (int) dst_pitch,
             mat1, (int) mat1_pitch,
             mat2, (int) mat2_pitch,
-            (int) rows, (int) cols);
+            (int) rows, (int) cols,
+            stream);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) PANIC("add_mat failed");
 }
 
-void cuda_scale(void* matrix, void* scale, size_t pitch, size_t rows, size_t cols)
+void cuda_scale(void* matrix, void* scale, size_t pitch, size_t rows, size_t cols, cudaStream_t* stream)
 {
-    scale_mat(matrix, scale, (int) pitch, (int) rows, (int) cols);
+    scale_mat(matrix, scale, (int) pitch, (int) rows, (int) cols, stream);
+}
+
+size_t cuda_size_of_cuda_event_t()
+{
+    return sizeof(cudaEvent_t);
+}
+
+void cuda_create_event(cudaEvent_t* event, cudaStream_t* stream) {
+    cudaError_t err = cudaEventCreate(event);
+    if (err != cudaSuccess) PANIC("cudaEventCreate failed");
+    cudaEventRecord(*event, *stream);
+}
+
+void cuda_destroy_event(cudaEvent_t* event) {
+    cudaError_t err = cudaEventDestroy(*event);
+    if (err != cudaSuccess) PANIC("cudaEventDestroy failed");
+}
+
+size_t cuda_size_of_cuda_stream_t()
+{
+    return sizeof(cudaStream_t);
+}
+
+void cuda_create_stream(cudaStream_t* stream) {
+    cudaError_t err = cudaStreamCreate(stream);
+    if (err != cudaSuccess) PANIC("cudaStreamCreate failed");
+}
+
+void cuda_destroy_stream(cudaStream_t* stream) {
+    cudaError_t err = cudaStreamDestroy(*stream);
+    if (err != cudaSuccess) PANIC("cudaStreamDestroy failed");
+}
+
+void cuda_make_stream_wait_for_event(cudaStream_t* stream, cudaEvent_t* event) {
+    cudaError_t err = cudaStreamWaitEvent(*stream, *event, 0);
+    if (err != cudaSuccess) PANIC("cudaStreamWaitEvent failed");
 }
 
 } // extern "C"
