@@ -18,7 +18,7 @@ library
     exposed-modules:  Tensor
     c-sources:        cbits/cuda_glue.cc
     extra-libraries:  cudart, cublas
-    build-depends:    base >=4.9, half, primitive, vector
+    build-depends:    base >=4.9, half, primitive, vector, QuickCheck
     hs-source-dirs:   src
     default-language: GHC2021
 
@@ -28,4 +28,13 @@ executable tneidarg-toy
     hs-source-dirs:   exe
     ghc-options:      -optl=./cbits/libcuda_kernels.so
     build-depends:    async, base >=4.9, time, tneidarg, random, containers, vector
+    default-language: GHC2021
+
+test-suite tneidarg-tests
+    type:             exitcode-stdio-1.0
+    import:           warnings
+    main-is:          Main.hs
+    hs-source-dirs:   test
+    ghc-options:      -optl=./cbits/libcuda_kernels.so
+    build-depends:    async, base >=4.9, time, tneidarg, random, containers, random, vector, hspec, QuickCheck
     default-language: GHC2021

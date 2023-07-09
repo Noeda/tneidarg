@@ -7,9 +7,10 @@ module Tensor
   , touchTensor
   , fromRows
   , toRows
+  , fromRowsVec
+  , toRowsVec
   , zeros
-  , viewColumnVec
-  , viewRows
+  , view
   , subtract
   , add
   , scale
@@ -24,6 +25,7 @@ module Tensor
   -- * Streams and events
   , Stream()
   , makeStream
+  , nullStream
   , Event()
   , makeEvent
   , makeStreamWaitForEvent )
@@ -35,16 +37,20 @@ import Control.Monad
 import Control.Monad.Primitive ( touch )
 import Data.Foldable
 import Data.Traversable
+import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as VU
 import Numeric.Half
 import Foreign.ForeignPtr
 import Foreign.C.Types
 import Foreign.Marshal.Alloc
 import Foreign.Marshal.Array
+import Foreign.Marshal.Utils
 import Foreign.Ptr
 import Foreign.Storable
 import Prelude hiding ( subtract )
 import System.Mem
 import System.IO.Unsafe
+import Test.QuickCheck hiding ( scale )
 
 foreign import ccall "init_cuda" c_init_cuda :: IO (Ptr ())
 -- foreign import ccall "shutdown_cuda" c_shutdown_cuda :: Ptr () -> IO ()
@@ -138,6 +144,14 @@ makeStream = mask_ $ do
   addForeignPtrFinalizer c_cuda_destroy_stream fptr
   return $ Stream { streamPtr = fptr }
 
+{-# NOINLINE nullStream #-}
+nullStream :: Stream
+nullStream = unsafePerformIO $ mask_ $ do
+  fptr <- mallocForeignPtrBytes (fromIntegral c_cuda_size_of_cuda_stream_t)
+  withForeignPtr fptr $ \ptr ->
+    fillBytes ptr 0 (fromIntegral c_cuda_size_of_cuda_stream_t)
+  return $ Stream { streamPtr = fptr }
+
 makeStreamWaitForEvent :: Stream -> Event -> IO ()
 makeStreamWaitForEvent (Stream stream_fptr) (Event event_fptr) = mask_ $ do
   withForeignPtr stream_fptr $ \stream_ptr ->
@@ -154,26 +168,55 @@ data Tensor = Tensor
   -- is complete.
   }
 
-viewColumnVec :: Tensor -> Int -> Tensor
-viewColumnVec vec _ | tensorCols vec /= 1 = error "viewColumnVec: tensorCols vec /= 1"
-viewColumnVec vec new_rows | new_rows == tensorRows vec = vec
-viewColumnVec vec new_rows | new_rows > tensorRows vec =
-  error "viewColumnVec: new_rows > tensorRows vec"
-viewColumnVec _ 0 = error "viewColumnVec: new_row == 0"
-viewColumnVec vec new_rows = vec { tensorRows = new_rows }
+instance Arbitrary Tensor where
+  {-# NOINLINE arbitrary #-}
+  arbitrary = do
+    nrows <- choose (1, 100)
+    ncols <- choose (1, 100)
+    initial_values <- replicateM nrows $ replicateM ncols $ choose (-1, 1) :: Gen [[Double]]
+    -- Concede and use unsafePerformIO to make testing a bit easier.
+    -- Can use them in QuickCheck properties as inputs without hassle.
+    let !s = unsafePerformIO $ fromRows initial_values
+    assert (rows s == nrows) $ assert (cols s == ncols) $ return s
 
--- viewRows tensor sz offset
-viewRows :: Tensor -> Int -> Int -> Tensor
-viewRows tensor sz 0 | sz == tensorRows tensor = tensor
-viewRows _ 0 _ = error "viewRowsOffset: new_row == 0"
-viewRows vec new_rows offset =
-  if new_rows > new_unviewed_sz
-    then error "viewColumnVecOffset: new_rows > new_unviewed_sz"
-    else vec { tensorRows = new_rows
-             , rawTensor = new_ptr }
+  shrink tensor =
+    (if rows tensor > 1
+       then [view tensor 0 0 (rows tensor `div` 2) (cols tensor)
+            ,view tensor (rows tensor `div` 2) 0 (rows tensor - (rows tensor `div` 2)) (cols tensor)]
+       else []) <>
+    (if cols tensor > 1
+       then [view tensor 0 0 (rows tensor) (cols tensor `div` 2)
+            ,view tensor 0 (cols tensor `div` 2) (rows tensor) (cols tensor - (cols tensor `div` 2))]
+       else []) <>
+    (if rows tensor > 1 && cols tensor > 1
+       -- one shrink for each quadrant
+       then let half_rows = rows tensor `div` 2
+                half_cols = cols tensor `div` 2
+            in [view tensor 0 0 half_rows half_cols
+               ,view tensor 0 half_cols half_rows (cols tensor - half_cols)
+               ,view tensor half_rows 0 (rows tensor - half_rows) half_cols
+               ,view tensor half_rows half_cols (rows tensor - half_rows) (cols tensor - half_cols)]
+       else [])
+
+-- view tensor row col nrows ncols
+view :: Tensor -> Int -> Int -> Int -> Int -> Tensor
+view tensor row col nrows ncols =
+  if nrows == 0 || ncols == 0
+    then error "view: nrows == 0 || ncols == 0"
+    else if nrows < 0 || ncols < 0 || row < 0 || col < 0
+           then error "view: nrows < 0 || ncols < 0 || row < 0 || col < 0"
+           else if row + nrows > tensorRows tensor
+                  then error "view: row + nrows > tensorRows tensor"
+                  else if col + ncols > tensorCols tensor
+                         then error "view: col + ncols > tensorCols tensor"
+                         else doTheView
  where
-  new_unviewed_sz = tensorRows vec - offset
-  new_ptr = plusForeignPtr (rawTensor vec) (offset * dtWidth)
+  doTheView = tensor { tensorRows = nrows
+                     , tensorCols = ncols
+                     , rawTensor = new_ptr }
+
+  offset = col * tensorPitch tensor + row * dtWidth
+  new_ptr = plusForeignPtr (rawTensor tensor) offset
 
 rows :: Tensor -> Int
 rows = tensorRows
@@ -290,6 +333,17 @@ toRows tensor = do
     for [0..tensorRows tensor - 1] $ \row -> do
       for [0..tensorCols tensor - 1] $ \col -> do
         peekElemOff ptr (row + col * tensorRows tensor) >>= return . float16ToDouble
+
+toRowsVec :: Tensor -> IO (V.Vector (VU.Vector Double))
+toRowsVec tensor = do
+  -- TODO: use vectors directly instead of going through lists with toRows
+  row_values <- toRows tensor
+  return $ fmap VU.fromList $ V.fromList row_values
+
+fromRowsVec :: V.Vector (VU.Vector Double) -> IO Tensor
+fromRowsVec row_values = do
+  let row_values' = fmap VU.toList $ V.toList row_values
+  fromRows row_values'
 
 -- copies contents of one tensor to another. Tensor dimensions must match.
 -- copy dst src
