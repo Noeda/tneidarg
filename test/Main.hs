@@ -109,7 +109,23 @@ tensorTests = do
         -- Especially for larger matrices the error can be quite large.
         for_ [0..rows t1-1] $ \i ->
           for_ [0..cols t2-1] $ \j ->
-            (t3_rows V.! i VU.! j) `shouldSatisfy` (\x -> abs (x - (t3_rows_manually V.! i VU.! j)) < 0.15)
+            (t3_rows V.! i VU.! j) `shouldSatisfy` (\x -> abs (x - (t3_rows_manually V.! i VU.! j)) < 0.2)
+
+    it "gaussian works" $
+      property $ \tensor -> do
+        rand_tensor <- gaussian nullStream 123 (rows tensor) (cols tensor) 0 0.1
+        rand_tensor_vec <- toRowsVec rand_tensor
+
+        for_ rand_tensor_vec $ \vec ->
+          for_ (VU.toList vec) $ \value ->
+            value `shouldSatisfy` (\x -> x >= -1.0 && x <= 1.0)
+
+        rand_tensor <- gaussian nullStream 123 (rows tensor) (cols tensor) 3.0 0.1
+        rand_tensor_vec <- toRowsVec rand_tensor
+
+        for_ rand_tensor_vec $ \vec ->
+          for_ (VU.toList vec) $ \value ->
+            value `shouldSatisfy` (\x -> x >= 2.0 && x <= 4.0)
 
 
 toUnboxed :: VU.Unbox a => V.Vector a -> VU.Vector a

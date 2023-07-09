@@ -56,6 +56,10 @@ void cuda_memset_2d(void* ptr, size_t pitch, size_t width, size_t height, int va
     if (err != cudaSuccess) PANIC("cudaMemset2D failed");
 }
 
+void cuda_gaussian_random_2d(void* ptr, int seed, size_t pitch, size_t width, size_t height, int value, cudaStream_t* stream, double mean, double stdev) {
+    write_gaussian_randoms_2d(ptr, seed, (int) pitch, (int) width, (int) height, stream, mean, stdev);
+}
+
 void cuda_copy_from_host_to_device_2d(void* dst, size_t dst_pitch, const void* src, size_t src_pitch, size_t width, size_t height) {
     cudaError_t err = cudaMemcpy2D(dst, dst_pitch, src, src_pitch, width, height, cudaMemcpyHostToDevice);
     if (err != cudaSuccess) {

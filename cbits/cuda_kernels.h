@@ -16,4 +16,6 @@ extern "C" {
                  int nrows, int ncols,
                  cudaStream_t* stream);
     void scale_mat(void* raw_matrix, void* scale, int pitch, int rows, int cols, cudaStream_t* stream);
+
+    void write_gaussian_randoms_2d(void* raw_dst, int seed, int pitch, int rows, int cols, cudaStream_t* stream, double mean, double stdev);
 }

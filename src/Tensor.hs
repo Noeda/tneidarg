@@ -10,6 +10,8 @@ module Tensor
   , fromRowsVec
   , toRowsVec
   , zeros
+  , Seed
+  , gaussian
   , view
   , subtract
   , add
@@ -36,6 +38,7 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.Primitive ( touch )
 import Data.Foldable
+import Data.Int
 import Data.Traversable
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
@@ -56,6 +59,7 @@ foreign import ccall "init_cuda" c_init_cuda :: IO (Ptr ())
 -- foreign import ccall "shutdown_cuda" c_shutdown_cuda :: Ptr () -> IO ()
 foreign import ccall "cuda_alloc_2d" c_cuda_alloc_2d :: CSize -> CSize -> CSize -> Ptr (Ptr ()) -> Ptr CSize -> IO CInt
 foreign import ccall "cuda_memset_2d" c_cuda_memset_2d :: Ptr () -> CSize -> CSize -> CSize -> CInt -> Ptr () -> IO ()
+foreign import ccall "cuda_gaussian_random_2d" c_cuda_gaussian_random_2d :: Ptr () -> CInt -> CSize -> CSize -> CSize -> CInt -> Ptr () -> CDouble -> CDouble -> IO ()
 foreign import ccall "cuda_copy_from_host_to_device_2d" c_cuda_copy_from_host_to_device_2d :: Ptr () -> CSize -> Ptr () -> CSize -> CSize -> CSize -> IO ()
 foreign import ccall "cuda_copy_from_device_to_host_2d" c_cuda_copy_from_device_to_host_2d :: Ptr () -> CSize -> Ptr () -> CSize -> CSize -> CSize -> IO ()
 foreign import ccall "cuda_copy_from_device_to_device_2d" c_cuda_copy_from_device_to_device_2d :: Ptr () -> CSize -> Ptr () -> CSize -> CSize -> CSize -> Ptr () -> IO ()
@@ -276,6 +280,7 @@ allocate rows cols = mask_ $ do
                       , tensorRows = rows
                       , tensorCols = cols }
 
+-- Creates a tensor filled with zeros
 zeros :: Stream -> Int -> Int -> IO Tensor
 zeros stream rows cols = do
   tensor <- allocate rows cols
@@ -286,6 +291,25 @@ zeros stream rows cols = do
                            (fromIntegral (tensorCols tensor))
                            0
                            stream_ptr
+  return tensor
+
+type Seed = Int32
+
+-- Creates a tensor filled with Gaussian distributed values with the given mean
+-- and standard deviation.
+gaussian :: Stream -> Seed -> Int -> Int -> Double -> Double -> IO Tensor
+gaussian stream seed rows cols mean stdev = do
+  tensor <- allocate rows cols
+  withStreamPtr stream $ \stream_ptr ->
+    withTensorPtr tensor $ \ptr ->
+      c_cuda_gaussian_random_2d ptr (fromIntegral seed)
+                                    (fromIntegral (tensorPitch tensor))
+                                    (fromIntegral (tensorRows tensor))
+                                    (fromIntegral (tensorCols tensor))
+                                    0
+                                    stream_ptr
+                                    (CDouble mean)
+                                    (CDouble stdev)
   return tensor
 
 {-# INLINE doubleToFloat16 #-}
